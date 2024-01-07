@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import csv
@@ -39,7 +38,7 @@ ARM_ONLY_FLAG_VALID       = 0x04  # Use only flag value of Serial Packet
 ARM_NOCHECK_MOVE          = 0x02  # Move without hardware checks
 ARM_MOVE_ABSOLUTE         = 0x01  # Move absolute (default relative)
 
-ARM_HAND_X_DELTA        = 100
+ARM_HAND_X_DELTA        = 150
 ARM_HAND_Y_DELTA        = 100
 
 # Some constants
@@ -58,9 +57,14 @@ stepper2_absolute_position = 0 # Base Stepper
 stepper3_absolute_position = 0 # Left Stepper
 
 # ARM state flags
-arm_jaws_active = False
-arm_xmove_active = False
 previous_hand_signid = None
+
+
+ARM_MOVE_HORIZONTAL = 0
+ARM_MOVE_VERTICAL   = 1
+ARM_MOVE_JAWS       = 2
+
+arm_current_mode = ARM_MOVE_HORIZONTAL
 
 
 serial_packet_number = 0
@@ -135,7 +139,7 @@ def move_steppers_to_pic_center_pix(sph, dis, xpix, ypix):
     global stepper1_absolute_position
     global stepper2_absolute_position
     global stepper3_absolute_position
-
+    
     stepper1_factor = 700000.0 / dis
     stepper2_factor = 700000.0 / dis
     stepper3_factor = 1000000.0 / dis
@@ -146,7 +150,7 @@ def move_steppers_to_pic_center_pix(sph, dis, xpix, ypix):
     l = stepper3_absolute_position + int(ysteps)
 
     print("stepper2_absolute_position = ", stepper2_absolute_position)
-    if (b < 0):
+    if (b < 0): 
         print("LEFT = ", b)
     else:
         print("RIGHT = ", b)
@@ -159,36 +163,36 @@ def move_steppers_to_pic_center_pix(sph, dis, xpix, ypix):
 
 # Returns the distance in mm
 # This cde uses focal length
-# def calculate_distance(pixel_diameter, focal_length_mm, real_diameter):
-#     """
-#     Calculate the distance to an object using the formula: distance = (real_diameter * focal_length_mm) / pixel_diameter
-#     :param pixel_diameter: Diameter of the object in pixels
-#     :param focal_length_mm: Focal length of the camera in millimeters
-#     :param real_diameter: Actual diameter of the object in millimeters
-#     :return: Distance to the object in millimeters
-#     """
-#     return round((real_diameter * focal_length_mm) / pixel_diameter, 6)
+def calculate_distance(pixel_diameter, focal_length_mm, real_diameter):
+    """
+    Calculate the distance to an object using the formula: distance = (real_diameter * focal_length_mm) / pixel_diameter
+    :param pixel_diameter: Diameter of the object in pixels
+    :param focal_length_mm: Focal length of the camera in millimeters
+    :param real_diameter: Actual diameter of the object in millimeters
+    :return: Distance to the object in millimeters
+    """
+    return round((real_diameter * focal_length_mm) / pixel_diameter, 6)
 
 
-# def filter_contours(contours, min_area, circularity_threshold):
-#     """
-#     Filter contours based on area and circularity
-#     :param contours: List of contours to filter
-#     :param min_area: Minimum area threshold
-#     :param circularity_threshold: Circularity threshold
-#     :return: Filtered contours
-#     """
-#     filtered_contours = []
-#     for contour in contours:
-#         # Calculate contour area
-#         area = cv2.contourArea(contour)
-#         if area > min_area:
-#             # Calculate circularity of the contour
-#             perimeter = cv2.arcLength(contour, True)
-#             circularity = 4 * np.pi * area / (perimeter ** 2)
-#             if circularity > circularity_threshold:
-#                 filtered_contours.append(contour)
-#     return filtered_contours
+def filter_contours(contours, min_area, circularity_threshold):
+    """
+    Filter contours based on area and circularity
+    :param contours: List of contours to filter
+    :param min_area: Minimum area threshold
+    :param circularity_threshold: Circularity threshold
+    :return: Filtered contours
+    """
+    filtered_contours = []
+    for contour in contours:
+        # Calculate contour area
+        area = cv2.contourArea(contour)
+        if area > min_area:
+            # Calculate circularity of the contour
+            perimeter = cv2.arcLength(contour, True)
+            circularity = 4 * np.pi * area / (perimeter ** 2)
+            if circularity > circularity_threshold:
+                filtered_contours.append(contour)
+    return filtered_contours
 
 
 
@@ -299,78 +303,84 @@ def arm_ball_tracking(sph, camera_frame, camera_matrix, dist_coeffs, focal_lengt
 
 
 def arm_move_tracking(sph, hand_signid):
-    global arm_jaws_active
-    global arm_xmove_active
+    global arm_current_mode
     global previous_hand_signid
     global stepper1_absolute_position
     global stepper2_absolute_position
     global stepper3_absolute_position
 
-    if (hand_signid == 3):  # OK
-        print("OK")
-        if (arm_jaws_active):
+    if (hand_signid == 3) or (hand_signid == 0):  # OK or Open
+        if arm_current_mode == ARM_MOVE_HORIZONTAL:
+            print("HORIZONTAL")
+            # Moe the arm  left
+            r = stepper1_absolute_position
+            b = stepper2_absolute_position + ARM_HAND_X_DELTA
+            l = stepper3_absolute_position
+            arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
+            time.sleep(abs(ARM_HAND_X_DELTA/1000.0))
+            update_absolute_move_position(r, b, l)
+
+        elif arm_current_mode == ARM_MOVE_VERTICAL:
+            print("VERTICAL")
+            # Moe the arm up
+            r = stepper1_absolute_position
+            b = stepper2_absolute_position
+            l = stepper3_absolute_position + ARM_HAND_Y_DELTA
+            arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
+            time.sleep(abs(ARM_HAND_Y_DELTA/1000.0))
+            update_absolute_move_position(r, b, l)
+
+        elif arm_current_mode == ARM_MOVE_JAWS:
+            print("JAWS")
             # Open the jaws
-            print("Open Jaws")
             pwmservo_open_arms(sph)
             time.sleep(abs(0.1))
+
         else:
-            # Moe the arm  left or up move
-            if (arm_xmove_active):
-                print("Move Left")
-                r = stepper1_absolute_position
-                b = stepper2_absolute_position + ARM_HAND_X_DELTA
-                l = stepper3_absolute_position
-                arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
-                time.sleep(abs(ARM_HAND_X_DELTA/1000.0))
-                update_absolute_move_position(r, b, l)
-            else:
-                print("Move Up")
-                r = stepper1_absolute_position
-                b = stepper2_absolute_position
-                l = stepper3_absolute_position + ARM_HAND_Y_DELTA
-                arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
-                time.sleep(abs(ARM_HAND_Y_DELTA/1000.0))
-                update_absolute_move_position(r, b, l)
+            print("Error: Wrong ARM mode")
 
     elif (hand_signid == 1):  # Close
-        print("Close")
-        if (arm_jaws_active):
+        if arm_current_mode == ARM_MOVE_HORIZONTAL:
+            print("HORIZONTAL")
+            # Moe the arm  right
+            r = stepper1_absolute_position
+            b = stepper2_absolute_position - ARM_HAND_X_DELTA
+            l = stepper3_absolute_position
+            arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
+            time.sleep(abs(ARM_HAND_X_DELTA/1000.0))
+            update_absolute_move_position(r, b, l)
+
+        elif arm_current_mode == ARM_MOVE_VERTICAL:
+            print("VERTICAL")
+            # Moe the arm down
+            r = stepper1_absolute_position
+            b = stepper2_absolute_position
+            l = stepper3_absolute_position - ARM_HAND_Y_DELTA
+            arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
+            time.sleep(abs(ARM_HAND_Y_DELTA/1000.0))
+            update_absolute_move_position(r, b, l)
+
+        elif arm_current_mode == ARM_MOVE_JAWS:
+            print("JAWS")
             # Close the jaws
-            print("Close Jaws")
             pwmservo_close_arms(sph)
             time.sleep(abs(0.1))
+
         else:
-            # Moe the arm  right or down move
-            if (arm_xmove_active):
-                print("Move Right")
-                r = stepper1_absolute_position
-                b = stepper2_absolute_position - ARM_HAND_X_DELTA
-                l = stepper3_absolute_position
-                arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
-                time.sleep(abs(ARM_HAND_X_DELTA/1000.0))
-                update_absolute_move_position(r, b, l)
-            else:
-                print("Move Down")
-                r = stepper1_absolute_position
-                b = stepper2_absolute_position
-                l = stepper3_absolute_position - ARM_HAND_Y_DELTA
-                arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
-                time.sleep(abs(ARM_HAND_Y_DELTA/1000.0))
-                update_absolute_move_position(r, b, l)
+            print("Error: Wrong ARM mode")
 
     elif (hand_signid == 2):  # Pointer
-        print("Pointer")
+        print("Pointer: Mode Change")
         if (previous_hand_signid != 2):
-            if (not arm_xmove_active):
-                arm_xmove_active = True
-        if (arm_jaws_active):
-            arm_jaws_active = False
-
-    elif (hand_signid == 0):  # Open
-        print("Open")
-        if (previous_hand_signid != 3):
-            if (not arm_jaws_active):
-                arm_jaws_active = True
+            if arm_current_mode == ARM_MOVE_HORIZONTAL:
+                arm_current_mode = ARM_MOVE_VERTICAL
+            elif arm_current_mode == ARM_MOVE_VERTICAL:
+                arm_current_mode = ARM_MOVE_JAWS
+            elif arm_current_mode == ARM_MOVE_JAWS:
+                arm_current_mode = ARM_MOVE_HORIZONTAL
+            else:
+                print("Wrong ARM mode")
+                arm_current_mode = ARM_MOVE_HORIZONTAL
 
     else:
         print("NO SIGNAL")
@@ -402,11 +412,10 @@ def main():
 
     # Initialize the serial port if we have to track the ball ##########################
     serial_port_handle = None
-    if (ball_tracking): # Ball tracking
-        serial_port = getTeensyPort()
-        serial_port_handle = serial.Serial(serial_port, SERIAL_BAUDRATE)
-        serial_port_handle.flush()
-        print("Teensy Serial Port = ", serial_port)
+    serial_port = getTeensyPort()
+    serial_port_handle = serial.Serial(serial_port, SERIAL_BAUDRATE)
+    serial_port_handle.flush()
+    print("Teensy Serial Port = ", serial_port)
 
     # Camera preparation ###############################################################
     # Load camera calibration parameters
@@ -481,7 +490,7 @@ def main():
         if not ret:
             break
 
-        if (ball_tracking): # Ball tracking
+        if (ball_tracking): # Ball tracking 
             arm_ball_tracking(serial_port_handle, image, camera_matrix, dist_coeffs, focal_length_mm, x_magnifiction_factor, y_magnifiction_factor)
             continue
 
@@ -532,9 +541,6 @@ def main():
                 most_common_fg_id = Counter(
                     finger_gesture_history).most_common()
 
-                if (not ball_tracking): # ARM movement tracking
-                    arm_move_tracking(serial_port_handle, hand_sign_id)
-
                 # Drawing part
                 debug_image = draw_bounding_rect(use_brect, debug_image, brect)
                 debug_image = draw_landmarks(debug_image, landmark_list)
@@ -545,6 +551,9 @@ def main():
                     keypoint_classifier_labels[hand_sign_id],
                     point_history_classifier_labels[most_common_fg_id[0][0]],
                 )
+                if (not ball_tracking): # ARM movement tracking 
+                    arm_move_tracking(serial_port_handle, hand_sign_id)
+
         else:
             point_history.append([0, 0])
 
@@ -771,31 +780,31 @@ def draw_landmarks(image, landmark_point):
 
     # Key Points
     for index, landmark in enumerate(landmark_point):
-        if index == 0:
+        if index == 0:  # 手首1
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 1:
+        if index == 1:  # 手首2
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 2:
+        if index == 2:  # 親指：付け根
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 3:
+        if index == 3:  # 親指：第1関節
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 4:
+        if index == 4:  # 親指：指先
             cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 5:
+        if index == 5:  # 人差指：付け根
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 6:
+        if index == 6:  # 人差指：第2関節
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
@@ -918,4 +927,3 @@ def draw_info(image, fps, mode, number):
 
 if __name__ == '__main__':
     main()
-
