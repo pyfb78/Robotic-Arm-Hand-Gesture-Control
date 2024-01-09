@@ -32,13 +32,13 @@ SERIAL_BAUDRATE = 115200
 ARM_RESET_POSITION        = 0x80  # Reset to starting position
 ARM_MAX_HEIGHT_POSITION   = 0x40  # Move steper 1 full height
 ARM_FULL_FORWARD_POSITION = 0x20  # Move stepper 1 full forward
-ARM_OPEN_PWMSERVO         = 0x10  # Open the PWMServo completely
-ARM_CLOSE_PWMSERVO        = 0x08  # Close the PWMServo
+ARM_OPEN_SERVO_JAWS       = 0x10  # Open the PWMServo completely
+ARM_CLOSE_SERVO_JAWS      = 0x08  # Close the PWMServo
 ARM_ONLY_FLAG_VALID       = 0x04  # Use only flag value of Serial Packet
 ARM_NOCHECK_MOVE          = 0x02  # Move without hardware checks
 ARM_MOVE_ABSOLUTE         = 0x01  # Move absolute (default relative)
 
-ARM_HAND_X_DELTA        = 150
+ARM_HAND_X_DELTA        = 200
 ARM_HAND_Y_DELTA        = 100
 
 # Some constants
@@ -103,15 +103,17 @@ def serial_send_packet(sph, flag, n0, n1, n2, n3, n4, n5):
     return
 
 
-def pwmservo_open_arms(sph):
-    flag = ARM_OPEN_PWMSERVO | ARM_ONLY_FLAG_VALID
+def servo_open_jaws(sph):
+    flag = ARM_OPEN_SERVO_JAWS | ARM_ONLY_FLAG_VALID
     serial_send_packet(sph, flag, 0, 0, 0, 0, 0, 0)
+    time.sleep(3.0)
     return
 
 
-def pwmservo_close_arms(sph):
-    flag = ARM_CLOSE_PWMSERVO | ARM_ONLY_FLAG_VALID
+def servo_close_jaws(sph):
+    flag = ARM_CLOSE_SERVO_JAWS | ARM_ONLY_FLAG_VALID
     serial_send_packet(sph, flag, 0, 0, 0, 0, 0, 0)
+    time.sleep(3.0)
     return
 
 
@@ -135,65 +137,6 @@ def update_absolute_move_position(abs_s1, abs_s2, abs_s3):
 #
 # Calculates the relative steps each stepper needs to make
 #
-def move_steppers_to_pic_center_pix(sph, dis, xpix, ypix):
-    global stepper1_absolute_position
-    global stepper2_absolute_position
-    global stepper3_absolute_position
-    
-    stepper1_factor = 700000.0 / dis
-    stepper2_factor = 700000.0 / dis
-    stepper3_factor = 1000000.0 / dis
-    xsteps = (stepper2_factor * xpix) / pic_frame_xrange
-    ysteps = (-stepper3_factor * ypix) / pic_frame_yrange
-    r = stepper1_absolute_position
-    b = stepper2_absolute_position + int(xsteps)
-    l = stepper3_absolute_position + int(ysteps)
-
-    print("stepper2_absolute_position = ", stepper2_absolute_position)
-    if (b < 0): 
-        print("LEFT = ", b)
-    else:
-        print("RIGHT = ", b)
-
-    arm_move_absolute(sph, stepper1_absolute_position, stepper2_absolute_position, stepper3_absolute_position, r, b, l)
-    time.sleep(abs((max(xsteps, ysteps)))/1000.0)
-    update_absolute_move_position(r, b, l)
-    return
-
-
-# Returns the distance in mm
-# This cde uses focal length
-def calculate_distance(pixel_diameter, focal_length_mm, real_diameter):
-    """
-    Calculate the distance to an object using the formula: distance = (real_diameter * focal_length_mm) / pixel_diameter
-    :param pixel_diameter: Diameter of the object in pixels
-    :param focal_length_mm: Focal length of the camera in millimeters
-    :param real_diameter: Actual diameter of the object in millimeters
-    :return: Distance to the object in millimeters
-    """
-    return round((real_diameter * focal_length_mm) / pixel_diameter, 6)
-
-
-def filter_contours(contours, min_area, circularity_threshold):
-    """
-    Filter contours based on area and circularity
-    :param contours: List of contours to filter
-    :param min_area: Minimum area threshold
-    :param circularity_threshold: Circularity threshold
-    :return: Filtered contours
-    """
-    filtered_contours = []
-    for contour in contours:
-        # Calculate contour area
-        area = cv2.contourArea(contour)
-        if area > min_area:
-            # Calculate circularity of the contour
-            perimeter = cv2.arcLength(contour, True)
-            circularity = 4 * np.pi * area / (perimeter ** 2)
-            if circularity > circularity_threshold:
-                filtered_contours.append(contour)
-    return filtered_contours
-
 
 
 def get_args():
@@ -219,89 +162,6 @@ def get_args():
     return args
 
 
-def arm_ball_tracking(sph, camera_frame, camera_matrix, dist_coeffs, focal_length, mfactorx, mfacitory):
-    global real_ball_diameter
-    global stepper1_absolute_position
-    global stepper2_absolute_position
-    global stepper3_absolute_position
-
-    # We get inverted frame from the camera and it needs to be rotated
-    # Rotate the image both vertically and horizontally
-    frame = cv2.flip(camera_frame, -1)
-    undistorted_frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
-
-    # Convert the frame to HSV color space
-    img_hsv = cv2.cvtColor(undistorted_frame, cv2.COLOR_BGR2HSV)
-
-    # Threshold the image to isolate the ball
-    # orange_lower = np.array([0, 100, 100])
-    # orange_upper = np.array([30, 255, 255])
-    green_lower = np.array((40, 40, 40))
-    green_upper = np.array((90, 255, 255))
-    mask_ball = cv2.inRange(img_hsv, green_lower, green_upper)
-
-    # Apply morphological operations to remove noise
-    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-
-    mask_ball = cv2.morphologyEx(mask_ball, cv2.MORPH_OPEN, kernel_open)
-    mask_ball = cv2.morphologyEx(mask_ball, cv2.MORPH_CLOSE, kernel_close)
-
-    # Find contours of the ball
-    contours, _ = cv2.findContours(mask_ball, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Filter contours based on size and circularity
-    min_area = 1000  # Adjusted minimum area threshold
-    circularity_threshold = 0.5  # Adjusted circularity threshold
-    filtered_contours = filter_contours(contours, min_area, circularity_threshold)
-    center = None
-
-    # check if there is atleast one contour
-    if len(filtered_contours) > 0:
-        # Find the contour with the largest area (the ball)
-        ball_contour = max(filtered_contours, key=cv2.contourArea)
-        epsilon = 0.001 * cv2.arcLength(ball_contour, True)
-        ball_boundary = cv2.approxPolyDP(ball_contour, epsilon, True)
-
-        if len(ball_boundary) > 2:
-            # Calculate the center, radius and diameter of the ball
-            (x, y), radius = cv2.minEnclosingCircle(ball_boundary)
-            diameter = radius * 2
-
-            pic_frame_xcenter = ((pic_frame_xrange/mfactorx) / 2)
-            pic_frame_ycenter = ((pic_frame_yrange/mfactory) / 2)
-
-            x_pix_delta = x - pic_frame_xcenter
-            y_pix_delta = pic_frame_ycenter - y
-
-            print("Ball x = ", x)
-            print("x_pix_delta = ", x_pix_delta)
-
-            M = cv2.moments(ball_contour)
-            center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
-            # draw the circle and centroid on the frame,
-            # then update the list of tracked points
-
-            # Uncomment this code if you want a perfect circle around the ball
-            # cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
-            # cv2.circle(frame, center, 5, (0, 0, 255), -1)
-
-            # Draw the boundary around the ball as a polygon
-            cv2.drawContours(frame, [ball_boundary], -1, (0, 255, 0), 2)
-            # Calculate and print the distance to the ball
-            distance = calculate_distance(diameter, focal_length_mm, real_ball_diameter)
-            print("Distance to the ball: {:.6f} mm".format(distance))
-
-            move_steppers_to_pic_center_pix(sph, distance, x_pix_delta, y_pix_delta)
-
-            # Display the frame
-            cv2.imshow("Live Feed", frame)
-        else:
-            cv2.imshow("Live Feed", frame)
-    return
-
-
-
 def arm_move_tracking(sph, hand_signid):
     global arm_current_mode
     global previous_hand_signid
@@ -311,7 +171,7 @@ def arm_move_tracking(sph, hand_signid):
 
     if (hand_signid == 3) or (hand_signid == 0):  # OK or Open
         if arm_current_mode == ARM_MOVE_HORIZONTAL:
-            print("HORIZONTAL")
+            print("HORIZONTAL: LEFT")
             # Moe the arm  left
             r = stepper1_absolute_position
             b = stepper2_absolute_position + ARM_HAND_X_DELTA
@@ -321,7 +181,7 @@ def arm_move_tracking(sph, hand_signid):
             update_absolute_move_position(r, b, l)
 
         elif arm_current_mode == ARM_MOVE_VERTICAL:
-            print("VERTICAL")
+            print("VERTICAL: UP")
             # Moe the arm up
             r = stepper1_absolute_position
             b = stepper2_absolute_position
@@ -331,17 +191,16 @@ def arm_move_tracking(sph, hand_signid):
             update_absolute_move_position(r, b, l)
 
         elif arm_current_mode == ARM_MOVE_JAWS:
-            print("JAWS")
+            print("JAWS: OPEN")
             # Open the jaws
-            pwmservo_open_arms(sph)
-            time.sleep(abs(0.1))
+            servo_open_jaws(sph)
 
         else:
             print("Error: Wrong ARM mode")
 
     elif (hand_signid == 1):  # Close
         if arm_current_mode == ARM_MOVE_HORIZONTAL:
-            print("HORIZONTAL")
+            print("HORIZONTAL: RIGHT")
             # Moe the arm  right
             r = stepper1_absolute_position
             b = stepper2_absolute_position - ARM_HAND_X_DELTA
@@ -351,7 +210,7 @@ def arm_move_tracking(sph, hand_signid):
             update_absolute_move_position(r, b, l)
 
         elif arm_current_mode == ARM_MOVE_VERTICAL:
-            print("VERTICAL")
+            print("VERTICAL: DOWN")
             # Moe the arm down
             r = stepper1_absolute_position
             b = stepper2_absolute_position
@@ -361,22 +220,23 @@ def arm_move_tracking(sph, hand_signid):
             update_absolute_move_position(r, b, l)
 
         elif arm_current_mode == ARM_MOVE_JAWS:
-            print("JAWS")
+            print("JAWS: CLOSE")
             # Close the jaws
-            pwmservo_close_arms(sph)
-            time.sleep(abs(0.1))
+            servo_close_jaws(sph)
 
         else:
             print("Error: Wrong ARM mode")
 
     elif (hand_signid == 2):  # Pointer
-        print("Pointer: Mode Change")
         if (previous_hand_signid != 2):
             if arm_current_mode == ARM_MOVE_HORIZONTAL:
+                print("Pointer: Mode change to VERTICAL")
                 arm_current_mode = ARM_MOVE_VERTICAL
             elif arm_current_mode == ARM_MOVE_VERTICAL:
+                print("Pointer: Mode change to JAWS")
                 arm_current_mode = ARM_MOVE_JAWS
             elif arm_current_mode == ARM_MOVE_JAWS:
+                print("Pointer: Mode change to HORIZONTAL")
                 arm_current_mode = ARM_MOVE_HORIZONTAL
             else:
                 print("Wrong ARM mode")
@@ -490,7 +350,7 @@ def main():
         if not ret:
             break
 
-        if (ball_tracking): # Ball tracking 
+        if (ball_tracking): # Ball tracking
             arm_ball_tracking(serial_port_handle, image, camera_matrix, dist_coeffs, focal_length_mm, x_magnifiction_factor, y_magnifiction_factor)
             continue
 
@@ -551,7 +411,7 @@ def main():
                     keypoint_classifier_labels[hand_sign_id],
                     point_history_classifier_labels[most_common_fg_id[0][0]],
                 )
-                if (not ball_tracking): # ARM movement tracking 
+                if (not ball_tracking): # ARM movement tracking
                     arm_move_tracking(serial_port_handle, hand_sign_id)
 
         else:
@@ -780,87 +640,87 @@ def draw_landmarks(image, landmark_point):
 
     # Key Points
     for index, landmark in enumerate(landmark_point):
-        if index == 0:  # 手首1
+        if index == 0:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 1:  # 手首2
+        if index == 1:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 2:  # 親指：付け根
+        if index == 2:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 3:  # 親指：第1関節
+        if index == 3:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 4:  # 親指：指先
+        if index == 4:
             cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 5:  # 人差指：付け根
+        if index == 5:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 6:  # 人差指：第2関節
+        if index == 6:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 7:  # 人差指：第1関節
+        if index == 7:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 8:  # 人差指：指先
+        if index == 8:
             cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 9:  # 中指：付け根
+        if index == 9:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 10:  # 中指：第2関節
+        if index == 10:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 11:  # 中指：第1関節
+        if index == 11:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 12:  # 中指：指先
+        if index == 12:
             cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 13:  # 薬指：付け根
+        if index == 13:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 14:  # 薬指：第2関節
+        if index == 14:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 15:  # 薬指：第1関節
+        if index == 15:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 16:  # 薬指：指先
+        if index == 16:
             cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 17:  # 小指：付け根
+        if index == 17:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 18:  # 小指：第2関節
+        if index == 18:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 19:  # 小指：第1関節
+        if index == 19:
             cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 20:  # 小指：指先
+        if index == 20:
             cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),
                       -1)
             cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
