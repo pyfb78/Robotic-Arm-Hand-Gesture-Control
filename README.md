@@ -5,4 +5,4 @@ Python code is based upon following project, I changed parts of it in order to m
 
 https://github.com/kinivi/hand-gesture-recognition-mediapipe
 
-[![stuff](https://drive.google.com/thumbnail?authuser=0&sz=w1280&id=10H2KR81M2epqzRKNdCwb-rFv8swm0lII)](https://drive.google.com/file/d/10H2KR81M2epqzRKNdCwb-rFv8swm0lII/view?usp=sharing "stuff")
+[![stuff](https://res.cloudinary.com/marcomontalbano/image/upload/v1719285735/video_to_markdown/images/google-drive--10H2KR81M2epqzRKNdCwb-rFv8swm0lII-c05b58ac6eb4c4700831b2b3070cd403.jpg)](https://drive.google.com/file/d/10H2KR81M2epqzRKNdCwb-rFv8swm0lII/view?usp=sharing "stuff")
